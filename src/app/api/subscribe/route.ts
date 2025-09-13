@@ -9,6 +9,9 @@ type Lead = {
   ua?: string;
 };
 
+const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+let audienceIdCache: string | undefined;
+
 async function appendLead(email: string, meta: Partial<Lead>) {
   const dataDir = path.join(process.cwd(), "data");
   const file = path.join(dataDir, "leads.json");
@@ -32,7 +35,7 @@ async function appendLead(email: string, meta: Partial<Lead>) {
   }
 }
 
-async function forwardViaResend(email: string) {
+async function forwardViaResend(email: string, idempotencyKey?: string) {
   const apiKey = process.env.RESEND_API_KEY;
   const to = process.env.SUBSCRIBE_FORWARD_TO;
   const from = process.env.SUBSCRIBE_FROM || "CréaScope <onboarding@creascope.app>";
@@ -45,7 +48,7 @@ async function forwardViaResend(email: string) {
       to,
       subject: "Nouveau lead (bêta CréaScope)",
       text: `Email: ${email}`,
-    });
+    }, idempotencyKey ? { idempotencyKey } : undefined);
   } catch (error) {
     console.error("Failed to forward via Resend:", error);
   }
@@ -58,7 +61,7 @@ async function addToResendAudience(email: string) {
     const { Resend } = await import("resend");
     const resend = new Resend(apiKey);
 
-    let audienceId = process.env.RESEND_AUDIENCE_ID;
+    let audienceId = audienceIdCache || process.env.RESEND_AUDIENCE_ID;
     const audienceName = process.env.RESEND_AUDIENCE_NAME || "CréaScope — Bêta";
 
     if (!audienceId) {
@@ -73,7 +76,29 @@ async function addToResendAudience(email: string) {
     }
 
     if (audienceId) {
-      await resend.contacts.create({ audienceId, email });
+      // Mémorise pour les prochains appels de la même lambda
+      audienceIdCache = audienceId;
+      // Petit délai pour éviter d’enchainer GET/POST trop vite (rate‑limit éventuel)
+      await sleep(150);
+
+      const idempotencyKey = `subscribe-contact-${email.toLowerCase()}`;
+      try {
+        await resend.contacts.create({ audienceId, email }, { idempotencyKey });
+      } catch (error) {
+        const status = (error as any)?.status || (error as any)?.statusCode;
+        const isRateLimit = status === 429 || /429|rate limit/i.test(String((error as any)?.message || ""));
+        if (isRateLimit) {
+          // Retry simple avec backoff
+          await sleep(600);
+          try {
+            await resend.contacts.create({ audienceId, email }, { idempotencyKey });
+          } catch (err2) {
+            console.error("Resend contacts.create failed after retry:", err2);
+          }
+        } else {
+          console.error("Resend contacts.create failed:", error);
+        }
+      }
     }
   } catch (error) {
     console.error("Failed to add contact to Resend audience:", error);
@@ -95,7 +120,8 @@ export async function POST(req: Request) {
     const when = new Date().toISOString();
 
     await appendLead(email, { createdAt: when, ua });
-    await forwardViaResend(email);
+    // Idempotency pour éviter les doublons côté Resend en cas de retry
+    await forwardViaResend(email, `subscribe-email-${email.toLowerCase()}-${when}`);
     const enableAudience = process.env.SUBSCRIBE_ADD_TO_RESEND_AUDIENCE === "1";
     if (enableAudience && (process.env.RESEND_AUDIENCE_ID || process.env.RESEND_AUDIENCE_NAME)) {
       await addToResendAudience(email);
