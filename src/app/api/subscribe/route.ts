@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import type { ListAudiencesResponse, CreateAudienceResponse } from "resend";
 import { promises as fs } from "fs";
 import path from "path";
 
@@ -61,43 +60,33 @@ async function addToResendAudience(email: string) {
     const { Resend } = await import("resend");
     const resend = new Resend(apiKey);
 
-    let audienceId = audienceIdCache || process.env.RESEND_AUDIENCE_ID;
-    const audienceName = process.env.RESEND_AUDIENCE_NAME || "CréaScope — Bêta";
-
+    // Utilise uniquement l'ID d'audience fourni via l'env. Pas de GET/LIST/CREATE.
+    const audienceId = audienceIdCache || process.env.RESEND_AUDIENCE_ID;
     if (!audienceId) {
-      const list = (await resend.audiences.list()) as ListAudiencesResponse;
-      const found = list.data?.data?.find((a) => a.name === audienceName);
-      if (found?.id) {
-        audienceId = found.id;
-      } else {
-        const created = (await resend.audiences.create({ name: audienceName })) as CreateAudienceResponse;
-        audienceId = created.data?.id;
-      }
+      console.warn("RESEND_AUDIENCE_ID manquant: saut de l'ajout à l'audience");
+      return;
     }
 
-    if (audienceId) {
-      // Mémorise pour les prochains appels de la même lambda
-      audienceIdCache = audienceId;
-      // Petit délai pour éviter d’enchainer GET/POST trop vite (rate‑limit éventuel)
-      await sleep(150);
+    audienceIdCache = audienceId;
+    // Délai léger avant POST pour réduire les 429 éventuels
+    await sleep(300);
 
-      const idempotencyKey = `subscribe-contact-${email.toLowerCase()}`;
-      try {
-        await resend.contacts.create({ audienceId, email }, { idempotencyKey });
-      } catch (error) {
-        const status = (error as any)?.status || (error as any)?.statusCode;
-        const isRateLimit = status === 429 || /429|rate limit/i.test(String((error as any)?.message || ""));
-        if (isRateLimit) {
-          // Retry simple avec backoff
-          await sleep(600);
-          try {
-            await resend.contacts.create({ audienceId, email }, { idempotencyKey });
-          } catch (err2) {
-            console.error("Resend contacts.create failed after retry:", err2);
-          }
-        } else {
-          console.error("Resend contacts.create failed:", error);
+    const idempotencyKey = `subscribe-contact-${email.toLowerCase()}`;
+    try {
+      await resend.contacts.create({ audienceId, email }, { idempotencyKey });
+    } catch (error) {
+      const status = (error as any)?.status || (error as any)?.statusCode;
+      const isRateLimit = status === 429 || /429|rate limit/i.test(String((error as any)?.message || ""));
+      if (isRateLimit) {
+        // Retry simple avec backoff
+        await sleep(1000);
+        try {
+          await resend.contacts.create({ audienceId, email }, { idempotencyKey });
+        } catch (err2) {
+          console.error("Resend contacts.create failed after retry:", err2);
         }
+      } else {
+        console.error("Resend contacts.create failed:", error);
       }
     }
   } catch (error) {
@@ -123,7 +112,7 @@ export async function POST(req: Request) {
     // Idempotency pour éviter les doublons côté Resend en cas de retry
     await forwardViaResend(email, `subscribe-email-${email.toLowerCase()}-${when}`);
     const enableAudience = process.env.SUBSCRIBE_ADD_TO_RESEND_AUDIENCE === "1";
-    if (enableAudience && (process.env.RESEND_AUDIENCE_ID || process.env.RESEND_AUDIENCE_NAME)) {
+    if (enableAudience && process.env.RESEND_AUDIENCE_ID) {
       await addToResendAudience(email);
     }
 
