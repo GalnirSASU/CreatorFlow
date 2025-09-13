@@ -46,8 +46,7 @@ export async function GET(req: Request) {
         "Content-Disposition": `attachment; filename=${filename}`,
       },
     });
-  } catch (e) {
+  } catch {
     return new NextResponse("Server error", { status: 500 });
   }
 }
-

@@ -11,6 +11,21 @@ type Lead = {
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 let audienceIdCache: string | undefined;
 
+function getErrorInfo(err: unknown): { status?: number; message?: string } {
+  if (typeof err === "object" && err !== null) {
+    const maybe = err as { status?: unknown; statusCode?: unknown; message?: unknown };
+    const status =
+      typeof maybe.status === "number"
+        ? maybe.status
+        : typeof maybe.statusCode === "number"
+        ? maybe.statusCode
+        : undefined;
+    const message = typeof maybe.message === "string" ? maybe.message : undefined;
+    return { status, message };
+  }
+  return {};
+}
+
 async function appendLead(email: string, meta: Partial<Lead>) {
   const dataDir = path.join(process.cwd(), "data");
   const file = path.join(dataDir, "leads.json");
@@ -71,20 +86,23 @@ async function addToResendAudience(email: string) {
     // Délai léger avant POST pour réduire les 429 éventuels
     await sleep(300);
 
-    const idempotencyKey = `subscribe-contact-${email.toLowerCase()}`;
     try {
-      await resend.contacts.create({ audienceId, email }, { idempotencyKey });
-    } catch (error) {
-      const status = (error as any)?.status || (error as any)?.statusCode;
-      const isRateLimit = status === 429 || /429|rate limit/i.test(String((error as any)?.message || ""));
+      await resend.contacts.create({ audienceId, email });
+    } catch (error: unknown) {
+      const { status, message } = getErrorInfo(error);
+      const isRateLimit = status === 429 || /429|rate limit/i.test(String(message || ""));
+      const isDuplicate = status === 409 || /already exists|duplicate/i.test(String(message || ""));
       if (isRateLimit) {
         // Retry simple avec backoff
         await sleep(1000);
         try {
-          await resend.contacts.create({ audienceId, email }, { idempotencyKey });
-        } catch (err2) {
+          await resend.contacts.create({ audienceId, email });
+        } catch (err2: unknown) {
           console.error("Resend contacts.create failed after retry:", err2);
         }
+      } else if (isDuplicate) {
+        // Ignore doublons
+        return;
       } else {
         console.error("Resend contacts.create failed:", error);
       }
