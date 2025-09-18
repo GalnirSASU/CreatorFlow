@@ -1,7 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import Script from "next/script";
 import { useMemo, useState } from "react";
+import { getAllPosts } from "@/content/blog/posts";
+
+const blogHighlights = getAllPosts().slice(0, 3);
+
+function formatPostDate(isoDate: string) {
+  return new Intl.DateTimeFormat("fr-FR", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(isoDate));
+}
 
 export default function Home() {
   const [email, setEmail] = useState("");
@@ -152,6 +164,9 @@ export default function Home() {
           <nav className="hidden sm:flex items-center gap-6 text-sm text-gray-300">
             <a href="#solution" className="hover:text-white">Solution</a>
             <a href="#fonctionnalites" className="hover:text-white">Fonctionnalités</a>
+            <Link href="/blog" className="hover:text-white">
+              Blog
+            </Link>
             <a href="#tarifs" className="hover:text-white">Tarifs</a>
             <a href="#faq" className="hover:text-white">FAQ</a>
           </nav>
@@ -160,7 +175,7 @@ export default function Home() {
 
       <main className="relative z-10">
         {/* Hero */}
-        <section className="mx-auto max-w-6xl px-4 py-16 sm:py-24">
+        <section id="hero" className="mx-auto max-w-6xl px-4 py-16 sm:py-24">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-gray-200">
               <span>🎯</span>
@@ -274,6 +289,54 @@ export default function Home() {
             </div>
           </div>
         </section>
+
+        {/* Blog highlights */}
+        {blogHighlights.length ? (
+          <section className="border-t border-white/10">
+            <div className="mx-auto max-w-6xl px-4 py-16">
+              <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <span className="text-sm uppercase tracking-[0.3em] text-gray-400">Blog</span>
+                  <h2 className="mt-2 text-2xl font-bold">Conseils pour faire grandir ton influence</h2>
+                  <p className="mt-2 max-w-2xl text-sm text-gray-300 sm:text-base">
+                    Les derniers articles partagent des plans d&apos;action, workflows et astuces SEO pour rester constant et visible.
+                  </p>
+                </div>
+                <Link
+                  href="/blog"
+                  className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-300 transition hover:text-emerald-200"
+                >
+                  Voir tous les articles
+                  <span aria-hidden>→</span>
+                </Link>
+              </div>
+              <div className="grid gap-6 sm:grid-cols-3">
+                {blogHighlights.map((post) => (
+                  <article key={post.slug} className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/5 p-6">
+                    <div className="flex items-center gap-3 text-xs text-emerald-300/80">
+                      <time dateTime={post.publishedAt}>{formatPostDate(post.publishedAt)}</time>
+                      <span aria-hidden>•</span>
+                      <span>{post.readingMinutes} min</span>
+                    </div>
+                    <h3 className="mt-4 text-xl font-semibold text-white">
+                      <Link className="transition hover:text-emerald-200" href={`/blog/${post.slug}`}>
+                        {post.title}
+                      </Link>
+                    </h3>
+                    <p className="mt-3 text-sm text-gray-300 sm:text-base">{post.excerpt}</p>
+                    <div className="mt-6 flex flex-wrap gap-2 text-xs text-gray-400">
+                      {(post.focusKeywords ?? post.tags).slice(0, 3).map((tag) => (
+                        <span key={tag} className="rounded-full border border-white/10 bg-white/10 px-2 py-0.5 uppercase tracking-wide">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         {/* Tarifs */}
         <section id="tarifs" className="border-t border-white/10">
